@@ -41,6 +41,14 @@
       <button id="btnNewTop" class="icon" title="新对话">＋</button>
     </div>
     <div class="statusline" id="threadStatus"></div>
+    <div class="modelbar hidden" id="modelBar">
+      <div class="modelrow">
+        <label for="modelSelect">模型</label>
+        <select id="modelSelect" aria-describedby="modelHint" disabled><option value="">沿用会话设置</option></select>
+        <button id="btnModelsReload" type="button" title="刷新可用模型" aria-label="刷新可用模型">↻</button>
+      </div>
+      <div class="modelhint" id="modelHint" role="status"></div>
+    </div>
     <div class="view" id="messages"></div>
     <div id="approvals"></div>
     <div class="composer">

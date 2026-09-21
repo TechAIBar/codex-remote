@@ -83,8 +83,11 @@
   function connect() {
     const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
     state.ws = ws;
-    ws.onopen = () => { $("threadStatus").textContent = ""; loadHosts().then(() => loadThreads(state.host)).then(restoreLast).then(refreshPending); };
+    ws.onopen = () => { $("threadStatus").textContent = ""; loadHosts().then(() => loadThreads(state.host)).then(restoreLast).then(refreshPending).catch((e) => toast("连接初始化失败: " + e.message, 4000)); };
     ws.onclose = (e) => {
+      if (state.ws !== ws) return;
+      for (const p of state.pending.values()) { clearTimeout(p.timer); p.reject(new Error("连接已断开，请重新连接后重试")); }
+      state.pending.clear();
       if (e.code === 1006 || e.code === 1008) { /* likely unauthorized */ }
       fetch("/api/me").then((r) => r.json()).then((j) => { if (!j.authed) location.replace("/login"); else setTimeout(connect, 2000); }).catch(() => setTimeout(connect, 3000));
     };
@@ -92,6 +95,7 @@
       const msg = JSON.parse(ev.data);
       if (msg.kind === "reply") {
         const p = state.pending.get(msg.reqId); if (!p) return; state.pending.delete(msg.reqId);
+        clearTimeout(p.timer);
         if (msg.error) p.reject(Object.assign(new Error(msg.error), { rpc: msg.rpc })); else p.resolve(msg.result);
       } else if (msg.kind === "notification") onNotification(msg.host, msg.method, msg.params);
       else if (msg.kind === "serverRequest") onServerRequest(msg);
@@ -99,15 +103,68 @@
       else if (msg.kind === "hostStatus") { state.hostStatus[msg.host] = msg.status; renderHostTabs(); if (msg.status === "error") toast(msg.host + " 连接失败: " + msg.error, 4000); }
     };
   }
-  function call(type, payload) {
+  function call(type, payload, timeoutMs) {
     return new Promise((resolve, reject) => {
       if (!state.ws || state.ws.readyState !== 1) return reject(new Error("未连接"));
       const reqId = state.reqId++;
-      state.pending.set(reqId, { resolve, reject });
+      const timer = timeoutMs ? setTimeout(() => { state.pending.delete(reqId); reject(new Error("请求超时，请重试")); }, timeoutMs) : null;
+      state.pending.set(reqId, { resolve, reject, timer });
       state.ws.send(JSON.stringify(Object.assign({ type, reqId }, payload || {})));
     });
   }
-  const rpc = (host, method, params) => call("rpc", { host, method, params });
+  const rpc = (host, method, params, timeoutMs) => call("rpc", { host, method, params }, timeoutMs);
+
+  // ---------- models (per open conversation, never global config) ----------
+  async function loadModels(c) {
+    if (!c || c.modelsLoading) return;
+    c.modelsLoading = true; c.modelsError = ""; renderModelPicker();
+    try {
+      const models = new Map(), cursors = new Set();
+      let cursor = null;
+      do {
+        const params = { limit: 100 };
+        if (cursor) params.cursor = cursor;
+        const r = await rpc(c.host, "model/list", params, 20000);
+        if (state.current !== c) return;
+        if (!r || !Array.isArray(r.data)) throw new Error("主机返回的模型列表格式不受支持");
+        for (const m of r.data) {
+          if (m && typeof m.model === "string" && m.model && !m.hidden) models.set(m.model, m);
+        }
+        cursor = r.nextCursor;
+        if (cursor && cursors.has(cursor)) throw new Error("模型列表分页异常");
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      c.models = [...models.values()];
+    } catch (e) { c.modelsError = e.message; }
+    finally { c.modelsLoading = false; if (state.current === c) renderModelPicker(); }
+  }
+  function renderModelPicker() {
+    const c = state.current, select = $("modelSelect"), hint = $("modelHint");
+    $("modelBar").classList.toggle("hidden", !c);
+    if (!c) return;
+    const models = c.models || [], selected = c.modelChoice || c.model || "";
+    const options = [{ value: "", label: "沿用会话设置" }];
+    for (const m of models) options.push({ value: m.model, label: (m.displayName || m.model) + (m.isDefault ? " · 主机默认" : ""), title: m.model + (m.description ? " — " + m.description : "") });
+    // Preserve custom/hidden session models instead of silently choosing a catalog default.
+    for (const value of [c.model, c.modelChoice]) {
+      if (value && !options.some((o) => o.value === value)) options.push({ value, label: value + (value === c.model ? " · 会话模型" : " · 待发送") });
+    }
+    select.innerHTML = options.map((o) => '<option value="' + esc(o.value) + '" title="' + esc(o.title || o.label) + '">' + esc(o.label) + '</option>').join("");
+    select.value = selected;
+    select.title = selected || "沿用会话设置";
+    const busy = !c.ready || c.sending || c.activeTurnId;
+    select.disabled = !!(busy || c.modelsLoading || c.modelsError || !models.length);
+    $("btnModelsReload").disabled = !!(busy || c.modelsLoading);
+    hint.classList.toggle("error", !!c.modelsError);
+    const choice = c.modelChoice ? "下一条消息使用 " + c.modelChoice : "切换后从下一条消息生效 · 仅此对话";
+    if (!c.ready) hint.textContent = "等待会话加载完成";
+    else if (c.sending) hint.textContent = "正在提交消息，暂不能切换模型";
+    else if (c.activeTurnId) hint.textContent = "本轮运行中，结束或停止后可切换模型";
+    else if (c.modelsLoading) hint.textContent = "正在从 " + c.host + " 加载可用模型…";
+    else if (c.modelsError) hint.textContent = "列表加载失败：" + c.modelsError + "；点 ↻ 重试。" + (c.modelChoice ? choice : "仍可沿用会话模型发送。");
+    else if (!models.length) hint.textContent = "主机未提供可选模型；" + (c.modelChoice ? choice : "仍可沿用会话模型发送。");
+    else hint.textContent = choice;
+  }
 
   // ---------- hosts ----------
   async function loadHosts() {
@@ -265,27 +322,31 @@
   // ---------- thread view ----------
   async function openThread(host, id, keepScroll) {
     const meta = (state.threads[host] || []).find((t) => t.id === id);
-    state.current = { host, id, name: meta ? meta.name : "", turns: [], items: new Map(), activeTurnId: null, streaming: new Map(), cwd: meta ? meta.cwd : "" };
+    const c = state.current = { host, id, name: meta ? meta.name : "", turns: [], items: new Map(), activeTurnId: null, streaming: new Map(), cwd: meta ? meta.cwd : "", ready: false, model: "", modelChoice: null, models: [] };
     try { localStorage.setItem("lastThread", host + "|" + id); } catch {}
     if (meta && meta.cwd) { state.expanded.add(host + "|" + meta.cwd); state.collapsed.delete(host + "|" + meta.cwd); saveCollapsed(); }
     $("threadTitle").textContent = (meta && (meta.name || meta.preview)) || "对话";
     $("messages").innerHTML = '<div class="center">加载历史…</div>';
     $("threadStatus").textContent = host + " · " + (meta ? projectName(meta.cwd) : "");
     show("chat"); updateComposer(); renderList();
+    loadModels(c);
     try {
       // resume 让 app-server 把这条对话加载进内存，之后才能 turn/start；同时拿到 turns
       const r = await rpc(host, "thread/resume", { threadId: id });
       let th = r.thread || r;
-      if (!state.current || state.current.id !== id) return;
+      if (state.current !== c) return;
+      c.model = r.model || ""; c.reasoningEffort = r.reasoningEffort;
       // resume 返回的 turns 可能是摘要（itemsView != full）或为空，这时用 thread/read 补全历史
       const full = Array.isArray(th.turns) && th.turns.length && th.turns.every((t) => !t.itemsView || t.itemsView === "full");
       if (!full) {
         try {
           const rd = await rpc(host, "thread/read", { threadId: id, includeTurns: true });
-          if (!state.current || state.current.id !== id) return;
+          if (state.current !== c) return;
           if (rd && rd.thread && Array.isArray(rd.thread.turns)) th = Object.assign({}, th, { turns: rd.thread.turns });
         } catch (e2) { console.warn("thread/read failed", e2); }
       }
+      if (state.current !== c) return;
+      c.ready = true;
       state.current.turns = th.turns || [];
       state.current.cwd = th.cwd || r.cwd;
       if (th.name) { state.current.name = th.name; $("threadTitle").textContent = th.name; }
@@ -296,6 +357,7 @@
       renderApprovals();
       updateComposer();
     } catch (e) {
+      if (state.current !== c) return;
       $("messages").innerHTML = '<div class="center">加载失败：' + esc(e.message) + "</div>";
     }
   }
@@ -348,10 +410,11 @@
   function nearBottom() { const m = $("messages"); return m.scrollHeight - m.scrollTop - m.clientHeight < 120; }
   function updateComposer() {
     const c = state.current; const btn = $("btnSend"); const ta = $("input");
-    ta.disabled = !c; btn.disabled = !c;
+    ta.disabled = !c || !c.ready || !!c.sending; btn.disabled = ta.disabled;
     ta.placeholder = c ? "继续对话…" : "先从左上角 ☰ 选择一个对话";
-    if (c && c.activeTurnId) { btn.textContent = "停止"; btn.classList.add("stop"); btn.disabled = false; $("threadStatus").textContent = c.host + " · 运行中…"; }
+    if (c && c.activeTurnId) { btn.textContent = "停止"; btn.classList.add("stop"); btn.disabled = !!c.sending; $("threadStatus").textContent = c.host + " · 运行中…"; }
     else { btn.textContent = "发送"; btn.classList.remove("stop"); if (c) $("threadStatus").textContent = c.host + " · " + projectName(c.cwd); }
+    renderModelPicker();
   }
   function renderWelcome() {
     $("threadTitle").textContent = "Codex Remote";
@@ -402,6 +465,14 @@
     if (method === "thread/started" && p.thread) { const arr = state.threads[host]; if (arr && !arr.find((x) => x.id === p.thread.id)) { arr.unshift(p.thread); renderList(); renderProject(); } }
     if (!c || c.host !== host || p.threadId !== c.id) return;
     switch (method) {
+      case "thread/settings/updated":
+        if (p.threadSettings) {
+          c.settingsVersion = (c.settingsVersion || 0) + 1;
+          if (typeof p.threadSettings.model === "string") c.model = p.threadSettings.model;
+          c.reasoningEffort = p.threadSettings.effort;
+          renderModelPicker();
+        }
+        break;
       case "turn/started":
         c.activeTurnId = p.turn.id; ensureTurn(p.turn.id); for (const it of p.turn.items || []) upsertItem(p.turn.id, it); updateComposer(); break;
       case "item/started":
@@ -508,20 +579,42 @@
 
   // ---------- send / interrupt ----------
   async function send() {
-    const c = state.current; if (!c) return;
+    const c = state.current; if (!c || !c.ready || c.sending) return;
     if (c.activeTurnId) {
       try { await rpc(c.host, "turn/interrupt", { threadId: c.id, turnId: c.activeTurnId }); toast("已请求停止"); } catch (e) { toast("停止失败: " + e.message, 4000); }
       return;
     }
     const ta = $("input"); const text = ta.value.trim(); if (!text) return;
-    ta.value = ""; autoGrow(ta); $("btnSend").disabled = true;
+    const params = { threadId: c.id, input: [{ type: "text", text }] };
+    const modelChoice = c.modelChoice;
+    const settingsVersion = c.settingsVersion || 0;
+    if (modelChoice) {
+      params.model = modelChoice;
+      const model = (c.models || []).find((m) => m.model === modelChoice);
+      // Carry over effort only when supported by the newly selected model.
+      if (model && Array.isArray(model.supportedReasoningEfforts) && model.defaultReasoningEffort &&
+          !model.supportedReasoningEfforts.some((e) => e.reasoningEffort === c.reasoningEffort)) params.effort = model.defaultReasoningEffort;
+    }
+    ta.value = ""; autoGrow(ta); c.sending = true; updateComposer();
     try {
-      const r = await rpc(c.host, "turn/start", { threadId: c.id, input: [{ type: "text", text }] });
-      c.activeTurnId = r.turn.id; ensureTurn(r.turn.id); for (const it of r.turn.items || []) upsertItem(r.turn.id, it);
-      if (!(r.turn.items || []).some((i) => i.type === "userMessage")) upsertItem(r.turn.id, { id: "local-" + Date.now(), type: "userMessage", content: [{ type: "text", text }] });
-      updateComposer(); scrollBottom();
-    } catch (e) { toast("发送失败: " + e.message, 5000); ta.value = text; }
-    $("btnSend").disabled = false;
+      const r = await rpc(c.host, "turn/start", params);
+      if ((c.settingsVersion || 0) === settingsVersion) {
+        if (modelChoice) c.model = modelChoice;
+        if (params.effort) c.reasoningEffort = params.effort;
+      }
+      if (modelChoice) c.modelChoice = null;
+      if (state.current !== c) return;
+      const existing = c.turns.find((t) => t.id === r.turn.id);
+      // A very short turn may complete before the start reply arrives.
+      if (!existing || existing.status === "inProgress") {
+        c.activeTurnId = r.turn.status === "inProgress" ? r.turn.id : null;
+        ensureTurn(r.turn.id); for (const it of r.turn.items || []) upsertItem(r.turn.id, it);
+        if (!(r.turn.items || []).some((i) => i.type === "userMessage")) upsertItem(r.turn.id, { id: "local-" + Date.now(), type: "userMessage", content: [{ type: "text", text }] });
+      }
+      scrollBottom();
+    } catch (e) {
+      if (state.current === c) { toast("发送失败: " + e.message, 5000); ta.value = text; autoGrow(ta); }
+    } finally { c.sending = false; if (state.current === c) updateComposer(); }
   }
   function autoGrow(ta) { ta.style.height = "auto"; ta.style.height = Math.min(140, ta.scrollHeight) + "px"; }
 
@@ -549,7 +642,8 @@
       state.threads[host] = [th].concat(state.threads[host] || []);
       state.host = host; localStorage.setItem("host", host); renderHostTabs();
       $("newInput").value = "";
-      state.current = { host, id: th.id, name: th.name || "", turns: [], items: new Map(), activeTurnId: null, streaming: new Map(), cwd };
+      state.current = { host, id: th.id, name: th.name || "", turns: [], items: new Map(), activeTurnId: null, streaming: new Map(), cwd, ready: true, model: r.model || "", reasoningEffort: r.reasoningEffort, modelChoice: null, models: [] };
+      loadModels(state.current);
       $("threadTitle").textContent = "新对话"; $("messages").innerHTML = '<div class="messages"></div>'; $("threadStatus").textContent = host + " · " + projectName(cwd);
       state.expanded.add(host + "|" + cwd); state.collapsed.delete(host + "|" + cwd); saveCollapsed();
       show("chat"); $("input").value = text; await send();
@@ -591,6 +685,13 @@
   $("btnNewTop").onclick = () => openNew(state.current && state.current.cwd);
   $("btnReload").onclick = () => { if (state.current) openThread(state.current.host, state.current.id); else openDrawer(); };
   $("btnSend").onclick = send;
+  $("modelSelect").onchange = () => {
+    const c = state.current; if (!c || $("modelSelect").disabled) return;
+    c.modelChoice = $("modelSelect").value;
+    if (!c.modelChoice || c.modelChoice === c.model) c.modelChoice = null;
+    renderModelPicker();
+  };
+  $("btnModelsReload").onclick = () => loadModels(state.current);
   $("input").addEventListener("input", (e) => autoGrow(e.target));
   $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });
   // 项目概览

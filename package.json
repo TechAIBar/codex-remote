@@ -5,6 +5,7 @@
   "description": "A self-hosted browser gateway for local and SSH-connected Codex conversations.",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/config.test.js"
+    "test": "node --test test/config.test.js",
+    "test:model-picker": "node test-model-picker.js"
   }
 }
