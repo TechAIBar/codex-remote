@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#171a21">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Codex Remote</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+<div id="app">
+  <!-- 侧边抽屉 -->
+  <div id="drawer" class="drawer hidden">
+    <div class="scrim" id="drawerScrim"></div>
+    <aside class="panel">
+      <div class="dhead">
+        <span class="brand">Codex Remote</span>
+        <button id="btnDrawerClose" class="icon" title="关闭">✕</button>
+      </div>
+      <button id="btnNew" class="newchat"><span class="pl">＋</span>新对话</button>
+      <div class="dsearch"><input id="search" type="search" placeholder="搜索对话或项目" autocomplete="off"></div>
+      <div class="hosttabs" id="hostTabs"></div>
+      <div class="dlist" id="drawerList"><div class="center">加载中…</div></div>
+      <div class="dfoot">
+        <button id="btnSettings">⚙ 设置</button>
+        <button id="btnRefresh">↻ 刷新</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 对话视图（主屏） -->
+  <div id="chatView">
+    <div class="topbar">
+      <button id="btnMenu" class="icon" title="菜单">☰</button>
+      <h1 id="threadTitle">Codex Remote</h1>
+      <button id="btnReload" class="icon" title="重新加载">↻</button>
+      <button id="btnNewTop" class="icon" title="新对话">＋</button>
+    </div>
+    <div class="statusline" id="threadStatus"></div>
+    <div class="view" id="messages"></div>
+    <div id="approvals"></div>
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="继续对话…"></textarea>
+      <button id="btnSend">发送</button>
+    </div>
+  </div>
+
+  <!-- 项目概览 -->
+  <div id="projectView" class="hidden">
+    <div class="topbar">
+      <button id="btnProjBack" class="icon">‹</button>
+      <h1 id="projTitle">项目</h1>
+      <button id="btnProjNew" class="icon" title="在此项目新建">＋</button>
+    </div>
+    <div class="statusline" id="projPath"></div>
+    <div class="view" id="projectList"></div>
+  </div>
+
+  <!-- 新对话 -->
+  <div id="newView" class="hidden">
+    <div class="topbar"><button id="btnNewBack" class="icon">‹</button><h1>新对话</h1></div>
+    <div class="view form">
+      <label>主机</label>
+      <select id="newHost"></select>
+      <label>项目目录（可从已有项目选择或手动填写）</label>
+      <input id="newCwd" list="cwdList" placeholder="例如 C:\projects\my-project">
+      <datalist id="cwdList"></datalist>
+      <label>第一条消息</label>
+      <textarea id="newInput" rows="4" placeholder="要做什么？"></textarea>
+      <div class="row"><button id="btnNewCancel">取消</button><button id="btnNewStart" class="primary">开始</button></div>
+    </div>
+  </div>
+
+  <!-- 设置 -->
+  <div id="settingsView" class="hidden">
+    <div class="topbar"><button id="btnSettingsBack" class="icon">‹</button><h1>设置 / 安全</h1></div>
+    <div class="view settings" id="settingsBody"></div>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

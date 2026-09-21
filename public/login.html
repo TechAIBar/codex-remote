@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Codex Remote 登录</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+</head>
+<body class="login-body">
+<form id="f" class="login-card" autocomplete="on">
+  <h1>Codex Remote</h1>
+  <p class="muted">输入访问口令</p>
+  <input id="pw" type="password" name="password" placeholder="口令" autocomplete="current-password" autofocus required>
+  <button type="submit" id="btn">登录</button>
+  <p id="err" class="err"></p>
+</form>
+<script>
+const f = document.getElementById("f"), pw = document.getElementById("pw"), err = document.getElementById("err"), btn = document.getElementById("btn");
+f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  err.textContent = ""; btn.disabled = true;
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw.value }) });
+    const j = await r.json();
+    if (!r.ok) { err.textContent = j.error || "登录失败"; pw.select(); }
+    else location.replace("/");
+  } catch (e2) { err.textContent = "网络错误: " + e2.message; }
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>

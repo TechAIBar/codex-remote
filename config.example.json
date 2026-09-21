@@ -1,0 +1,19 @@
+{
+  "port": 8443,
+  "bind": "0.0.0.0",
+  "hostname": "",
+  "extraNames": [],
+  "auth": {
+    "tokenTtlDays": 30,
+    "maxFails": 5,
+    "lockMinutes": 15
+  },
+  "hosts": [
+    {
+      "id": "local",
+      "label": "Local",
+      "type": "local",
+      "autoConnect": true
+    }
+  ]
+}

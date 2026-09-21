@@ -1,0 +1,29 @@
+# Private runtime configuration and state
+/config.json
+/config.local.json
+/data/
+.env
+.env.*
+!.env.example
+*.log
+*.pfx
+*.p12
+*.pem
+*.key
+*.pass
+*.cer
+*.crt
+*.sqlite
+*.sqlite3
+*.db
+# Local development artifacts
+node_modules/
+coverage/
+test-results/
+playwright-report/
+screenshots/
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+__pycache__/
